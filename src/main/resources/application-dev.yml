@@ -1,0 +1,5 @@
+spring:
+  application:
+    name: image-server
+env:
+  image-dir: /mnt/nas_mount/images/upload/giftishow_biz
