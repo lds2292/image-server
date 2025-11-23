@@ -43,7 +43,7 @@ public class FileQueryService {
 
         // If width specified, validate and use resized square image named base_w{width}.ext
         if (width != null) {
-            if (width < 100 || width > 600) {
+            if (width < 80 || width > 600) {
                 throw new IllegalArgumentException("w must be between 100 and 600");
             }
             try {

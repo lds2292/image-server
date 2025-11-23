@@ -14,7 +14,6 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.util.UriComponentsBuilder;
 
 import java.io.IOException;
 
@@ -33,7 +32,8 @@ public class FileController {
 
         log.info("filepath: {}, width: {}", filepath, width);
 
-        FileResourceResult result = fileQueryService.fetch(filepath, width);
+        // filepath는 PathVariable 전체를 그대로 사용 (불필요한 substring 제거)
+        FileResourceResult result = fileQueryService.fetch(filepath.substring(1), width);
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + result.getFilename() + "\"")
