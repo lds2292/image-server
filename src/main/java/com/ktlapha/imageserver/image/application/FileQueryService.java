@@ -13,7 +13,6 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 
 @Slf4j
 @Service
@@ -47,7 +46,7 @@ public class FileQueryService {
                 throw new IllegalArgumentException("w must be between 100 and 600");
             }
             try {
-                Path resized = thumbnailService.ensureSquareResizedExists(target, width);
+                Path resized = thumbnailService.ensureResizedExists(target, width);
                 file = resized.toFile();
                 target = resized;
             } catch (IllegalArgumentException e) {

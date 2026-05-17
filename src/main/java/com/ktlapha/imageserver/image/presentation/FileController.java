@@ -27,7 +27,7 @@ public class FileController {
 
     @GetMapping({"/api/files/{*filepath}", "/api/images/{*filepath}"})
     public ResponseEntity<Resource> getFile(
-        @PathVariable("filepath") @NotBlank String filepath,
+        @PathVariable @NotBlank String filepath,
         @RequestParam(name = "w", required = false) Integer width) throws IOException {
 
         log.info("filepath: {}, width: {}", filepath, width);

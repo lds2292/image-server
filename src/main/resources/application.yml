@@ -1,3 +1,5 @@
 spring:
   application:
     name: image-server
+env:
+  image-dir: /Users/ideogsu/Pictures/
