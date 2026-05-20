@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.coobird.thumbnailator.Thumbnails;
 import net.coobird.thumbnailator.filters.ImageFilter;
 import net.coobird.thumbnailator.resizers.configurations.ScalingMode;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.awt.image.BufferedImage;
@@ -15,23 +16,32 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 
 @Slf4j
 @Service
 public class ThumbnailService {
 
+    @Value("${env.resize-dir}")
+    private Path resizeBaseDir;
+
+    // 동일 경로에 대한 중복 생성을 방지하기 위한 진행 중 작업 추적 맵
+    private final ConcurrentHashMap<String, CompletableFuture<Path>> inProgress = new ConcurrentHashMap<>();
+
     /**
-     * 너비를 width로 리사이즈한 파일이 없으면 생성하고, 존재하면 해당 경로를 반환한다.
-     * 세로는 원본 비율을 유지하여 자동 계산된다.
+     * 리사이즈 파일이 없으면 생성하고, 존재하면 해당 경로를 반환한다.
+     * 동시에 같은 파일 요청이 들어와도 생성은 1번만 실행되고 나머지는 결과를 대기한다.
+     * 리사이즈 파일은 원본과 분리된 resizeBaseDir 아래 동일한 상대 경로에 저장된다.
      * 파일명 규칙: {base}_w{width}.{ext}  예) banner.jpg + width=200 → banner_w200.jpg
-     * 최대/최소 검증은 호출부에서 수행한다.
      *
-     * @param originalPath 원본 이미지 파일 경로
+     * @param originalPath 원본 이미지 파일 절대 경로
+     * @param relativePath 베이스 디렉토리 기준 상대 경로 (e.g. giftishow_panchok/seller/6/file.jpg)
      * @param width        출력 너비(px); 세로는 비율 유지로 자동 계산
      * @return 리사이즈된 이미지 파일의 경로
      */
-    public Path ensureResizedExists(Path originalPath, int width) throws IOException {
-        int size = width;
+    public Path ensureResizedExists(Path originalPath, String relativePath, int width) throws IOException {
         String fileName = originalPath.getFileName().toString();
         int dot = fileName.lastIndexOf('.');
         if (dot <= 0 || dot == fileName.length() - 1) {
@@ -41,24 +51,57 @@ public class ThumbnailService {
         String base = fileName.substring(0, dot);
         String ext = fileName.substring(dot + 1);
         String extLower = ext.toLowerCase();
+        String resizedName = base + "_w" + width + "." + ext;
 
-        String resizedName = base + "_w" + size + "." + ext;
-        Path resizedPath = originalPath.getParent().resolve(resizedName).normalize();
+        Path relativeDir = Path.of(relativePath).getParent();
+        Path resizedPath = (relativeDir != null)
+                ? resizeBaseDir.resolve(relativeDir).resolve(resizedName).normalize()
+                : resizeBaseDir.resolve(resizedName).normalize();
 
         if (Files.exists(resizedPath) && Files.isRegularFile(resizedPath)) {
             return resizedPath;
         }
 
+        String key = resizedPath.toString();
+        CompletableFuture<Path> newFuture = new CompletableFuture<>();
+        CompletableFuture<Path> existing = inProgress.putIfAbsent(key, newFuture);
+
+        if (existing != null) {
+            try {
+                return existing.get();
+            } catch (ExecutionException e) {
+                Throwable cause = e.getCause();
+                if (cause instanceof IOException) throw (IOException) cause;
+                throw new IOException(cause);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("Interrupted while waiting for thumbnail generation", e);
+            }
+        }
+
+        try {
+            Path result = doGenerate(originalPath, resizedPath, width, ext, extLower);
+            newFuture.complete(result);
+            return result;
+        } catch (IOException e) {
+            newFuture.completeExceptionally(e);
+            throw e;
+        } finally {
+            inProgress.remove(key, newFuture);
+        }
+    }
+
+    private Path doGenerate(Path originalPath, Path resizedPath, int width, String ext, String extLower) throws IOException {
         Files.createDirectories(resizedPath.getParent());
 
-        // 임시 파일에 먼저 쓴 후 원자적으로 이동 — 동시 요청이 와도 항상 완전한 파일만 노출된다.
-        // 주의: Thumbnailator는 outputFormat과 파일 확장자가 불일치하면 자동으로 확장자를 덧붙이므로,
-        //       임시 파일명도 최종 확장자로 끝나야 한다. 예) {base}_w{size}.tmp.{uuid}.jpg
+        String base = resizedPath.getFileName().toString();
+        base = base.substring(0, base.lastIndexOf('.'));
+
         String tmpExt = ("jpg".equals(extLower) || "jpeg".equals(extLower)) ? "jpg" : extLower;
-        Path tmpPath = originalPath.getParent().resolve(base + "_w" + size + ".tmp." + UUID.randomUUID() + "." + tmpExt).normalize();
+        Path tmpPath = resizedPath.getParent().resolve(base + ".tmp." + UUID.randomUUID() + "." + tmpExt).normalize();
         try {
             Thumbnails.Builder<?> builder = Thumbnails.of(originalPath.toFile())
-                    .width(size)
+                    .width(width)
                     .scalingMode(ScalingMode.PROGRESSIVE_BILINEAR)
                     .addFilter(UNSHARP_MASK);
 
@@ -73,14 +116,15 @@ public class ThumbnailService {
             return resizedPath;
         } catch (Exception e) {
             Files.deleteIfExists(tmpPath);
-            log.warn("Thumbnail generation failed for {} with ext {}. Falling back to PNG. cause={}", fileName, extLower, e.toString());
-            String fallback = base + "_w" + size + ".png";
-            Path fallbackPath = originalPath.getParent().resolve(fallback).normalize();
-            Path fallbackTmp = originalPath.getParent().resolve(base + "_w" + size + ".tmp." + UUID.randomUUID() + ".png").normalize();
-            Files.createDirectories(fallbackPath.getParent());
+            log.warn("Thumbnail generation failed for {} with ext {}. Falling back to PNG. cause={}",
+                    originalPath.getFileName(), extLower, e.toString());
+
+            String fallbackName = base.replaceAll("_w\\d+$", "") + "_w" + width + ".png";
+            Path fallbackPath = resizedPath.getParent().resolve(fallbackName).normalize();
+            Path fallbackTmp = resizedPath.getParent().resolve(base + ".tmp." + UUID.randomUUID() + ".png").normalize();
             try {
                 Thumbnails.of(originalPath.toFile())
-                        .width(size)
+                        .width(width)
                         .scalingMode(ScalingMode.PROGRESSIVE_BILINEAR)
                         .addFilter(UNSHARP_MASK)
                         .outputFormat("png")
@@ -94,10 +138,8 @@ public class ThumbnailService {
         }
     }
 
-    // 리사이즈 후 윤곽선 복원을 위한 언샤프 마스크 (amount≈0.6, radius=1px 상당)
-    // 커널: 중심에 1+8*a 배치, 주변 8칸에 -a 배치 (a = amount/8 ≈ 0.075)
     private static final ImageFilter UNSHARP_MASK = (BufferedImage img) -> {
-        float a = 0.075f; // amount / 8
+        float a = 0.075f;
         float c = 1f + 8 * a;
         Kernel kernel = new Kernel(3, 3, new float[]{
                 -a, -a, -a,
@@ -111,7 +153,6 @@ public class ThumbnailService {
         try {
             Files.move(src, dest, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         } catch (AtomicMoveNotSupportedException e) {
-            // 파일시스템이 atomic move를 미지원하는 경우 non-atomic으로 폴백 (NAS 등)
             Files.move(src, dest, StandardCopyOption.REPLACE_EXISTING);
         }
     }

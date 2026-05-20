@@ -1,101 +1,153 @@
 # Image Server
 
-간단한 이미지 업로드/조회 서버입니다. 원본 이미지 제공과 함께 쿼리 파라미터 기반(w) 정사각형 리사이즈 이미지를 생성·캐시하여 반환합니다.
+NAS에 저장된 이미지를 서빙하는 읽기 전용 이미지 서버입니다. `tbizimg.giftishow.com` / `tnbizcms.giftishow.com` / `bizimg.giftishow.com` 을 직접 대체합니다.
+
+원본 이미지 제공과 함께 `?w=` 파라미터 기반 리사이즈 이미지를 생성·캐시하여 반환합니다.
 
 ## 주요 기능
-- 이미지 업로드(Multipart): POST /api/images/upload
-- 파일/이미지 조회: GET /api/files/{*filepath}, GET /api/images/{*filepath}
-- 리사이즈 옵션: w=100~600(정사각형)
-- 리사이즈 파일 자동 생성 및 재사용: 원본과 동일 폴더에 `{base}_w{size}.{ext}`로 저장
-- 안전한 경로 검증: 설정된 루트 디렉터리 밖으로의 접근 차단
+
+- **읽기 전용**: 업로드 없이 NAS 이미지 조회만 담당
+- **URL 패턴 대체**: 기존 tbizimg URL 구조와 동일하게 요청 처리
+- **리사이즈**: `?w=80~600` 파라미터로 너비 지정 리사이즈 (세로 비율 유지)
+- **리사이즈 캐시**: 원본 NAS 디렉토리와 분리된 별도 디렉토리에 저장 및 재사용
+- **중복 생성 방지**: 동일 이미지에 동시 요청이 몰려도 생성 작업은 1번만 실행
+- **경로 보안**: `env.image-dir` 외부 접근 차단 (`..` 탈출 방지)
 
 ## 요구 사항
+
 - JDK 17+
-- Gradle(래퍼 포함)
+- Gradle (래퍼 포함)
 
 ## 설정
-이미지 파일이 저장될 루트 디렉터리를 `env.image-dir` 프로퍼티로 지정합니다. 프로필에 맞게 `application-*.yml`을 사용하세요.
 
-예) src/main/resources/application-local.yml
+프로필별 `application-*.yml`에서 아래 4개 프로퍼티를 지정합니다.
 
+| 프로퍼티 | 설명 |
+|---|---|
+| `env.image-dir` | NAS 원본 이미지 루트 디렉토리 |
+| `env.resize-dir` | 리사이즈 캐시 저장 디렉토리 |
+| `env.biz-dir` | `/files/**` 요청이 매핑되는 NAS 서브디렉토리 |
+| `env.panchok-dir` | `/image_panc/**` 요청이 매핑되는 NAS 서브디렉토리 |
+
+예) `application-dev.yml`
+
+```yaml
 env:
-  image-dir: /path/to/your/image-root
+  image-dir: /mnt/nas_mount/images/upload
+  resize-dir: /mnt/nas_mount/images/upload/resize
+  biz-dir: giftishow_biz
+  panchok-dir: giftishow_panchok
+```
 
-서버 실행 시 프로필을 지정하지 않으면 기본 설정(application.yml)이 적용됩니다. 로컬 실행 시에는 다음처럼 권장합니다.
+환경별 `biz-dir` 값:
 
-./gradlew bootRun -Dspring.profiles.active=local
+| 환경 | biz-dir |
+|---|---|
+| local / dev | `giftishow_biz` |
+| stg | `giftishow_biz_stg` |
+| prod | `giftishowbiz` |
 
 ## 빌드 & 실행
-- 빌드: `./gradlew clean build`
-- 실행: `./gradlew bootRun -Dspring.profiles.active=local`
+
+```bash
+./gradlew clean build
+./gradlew bootRun -Dspring.profiles.active=local
+```
 
 ## API 명세
 
-1) 파일/이미지 조회(원본 또는 리사이즈)
-- GET /api/files/{*filepath}
-- GET /api/images/{*filepath}
-- 쿼리 파라미터
-  - w: 선택. 정사각형 리사이즈 크기(px). 100 이상 600 이하.
+### URL 패턴 및 NAS 경로 매핑
 
-동작 규칙
-- w가 없으면 원본 파일을 그대로 반환합니다.
-- w가 있으면 같은 폴더에 `{파일명(확장자 제외)}_w{w}.{확장자}`가 존재하는지 확인합니다.
-  - 존재하면 해당 파일을 반환합니다.
-  - 없으면 원본으로부터 w x w 크기로 리사이즈하여 저장 후 반환합니다.
-- 비이미지 파일에 w를 지정하면 400 Bad Request가 반환됩니다.
-- 응답 헤더는 inline(Content-Disposition), Content-Type, Content-Length를 포함합니다.
+| URL 패턴 | NAS 경로 |
+|---|---|
+| `/files/{filename}` | `{image-dir}/{biz-dir}/{filename}` |
+| `/Resource/{*path}` | `{image-dir}/{path}` |
+| `/image_panc/{*path}` | `{image-dir}/{panchok-dir}/{path}` |
 
-예시
-- 원본: GET http://localhost:8080/api/files/images/gicon.png
-- 리사이즈: GET http://localhost:8080/api/files/images/gicon.png?w=200
-- 동일 로직, 다른 prefix: GET http://localhost:8080/api/images/images/gicon.png?w=200
+### 파일 조회
 
-curl 예시
-curl -i "http://localhost:8080/api/files/images/gicon.png"
-curl -i "http://localhost:8080/api/files/images/gicon.png?w=200"
+```
+GET /files/{filename}
+GET /Resource/{*path}
+GET /image_panc/{*path}
+```
 
-2) 이미지 업로드
-- POST /api/images/upload (multipart/form-data)
-- 파라미터
-  - file: 업로드할 파일
-  - folder: 저장할 하위 폴더 경로(예: images, avatars 등)
+**쿼리 파라미터**
 
-예시
-curl -i -X POST \
-  -F "file=@/absolute/path/to/local.png" \
-  -F "folder=images" \
-  http://localhost:8080/api/images/upload
+| 파라미터 | 필수 | 설명 |
+|---|---|---|
+| `w` | 선택 | 리사이즈 너비(px), 허용값: 45, 80, 100, 150, 200, 250, 300, 400, 600, 800 |
 
-응답(JSON)은 저장된 경로/파일명 등의 정보를 포함하도록 ImageResponse에 의해 직렬화됩니다.
+**동작 규칙**
+
+- `w` 없음: 원본 파일을 그대로 반환
+- `w` 있음: `{resize-dir}/.../{base}_w{w}.{ext}` 캐시 확인 → 없으면 생성 후 반환
+- 비이미지 파일에 `w` 지정 시 400 반환
+
+**요청 예시**
+
+```bash
+# 원본
+curl -i "http://localhost:8080/image_panc/seller/6/08491933.jpeg"
+curl -i "http://localhost:8080/Resource/goods/2022/G00000119604/G00000119604.jpg"
+curl -i "http://localhost:8080/files/BBS_20260515104439812.png"
+
+# 리사이즈
+curl -i "http://localhost:8080/image_panc/seller/6/08491933.jpeg?w=300"
+curl -i "http://localhost:8080/Resource/goods/2022/G00000119604/G00000119604.jpg?w=200"
+```
+
+**응답 헤더**: `Content-Disposition: inline`, `Content-Type`, `Content-Length`
 
 ## 리사이즈 정책
-- 지원 범위: 100 ≤ w ≤ 600
-- 명명 규칙: `{base}_w{w}.{ext}`
-- 알파 채널 보존 및 포맷 불가 시 PNG로 폴백 저장
 
-## 오류 응답 형식
-유효성 오류 또는 잘못된 파라미터는 400으로 응답됩니다. 예:
+- 허용 사이즈: `45, 80, 100, 150, 200, 250, 300, 400, 600, 800`
+- 파일명 규칙: `{base}_w{w}.{ext}`
+- 저장 위치: `resize-dir` 하위에 원본과 동일한 상대 경로로 저장
+- 포맷 처리 실패 시 PNG로 폴백 저장
+- 동시 요청 처리: 동일 경로에 대한 중복 생성 방지 (`ConcurrentHashMap` 기반)
 
+## 디렉토리 구조
+
+```
+{image-dir}/                        ← 원본 (읽기만)
+  {biz-dir}/
+    BBS_xxx.png
+  {panchok-dir}/
+    seller/{id}/file.jpg
+    admin/{uuid}.png
+  goods/
+    {year}/{id}/{id}.jpg
+
+{resize-dir}/                       ← 리사이즈 캐시 (쓰기)
+  {panchok-dir}/
+    seller/{id}/file_w300.jpg
+  goods/
+    {year}/{id}/{id}_w200.jpg
+```
+
+## 오류 응답
+
+```json
 {
   "message": "w must be between 100 and 600",
   "status": 400,
   "timestamp": "2025-01-01T12:34:56Z"
 }
+```
 
-그 외 예외는 500으로 매핑됩니다.
+| 상황 | 상태 코드 |
+|---|---|
+| 잘못된 `w` 값 | 400 |
+| 파일 없음 | 404 |
+| 경로 탈출 시도 (`..`) | 400 |
+| 그 외 서버 오류 | 500 |
 
-## 보안/경로 검증
-- 모든 요청 경로는 `env.image-dir` 하위로 normalize한 뒤 startsWith 검사로 상위 디렉터리 탈출(`..`)을 차단합니다.
+## 주요 클래스
 
-## 주의 사항
-- 리사이즈 파일 생성을 위해 서버 프로세스가 이미지 루트 디렉터리에 쓰기 권한을 가져야 합니다.
-- 업로드된 파일은 원본 폴더 구조 하위에 저장되며, 리사이즈 파일은 같은 폴더에 생성됩니다.
-
-## 개발 참고
-- 주요 클래스
-  - FileController: 조회 엔드포인트(멀티 매핑: /api/files, /api/images)
-  - FileQueryService: 파일 조회, 콘텐츠 타입 판별, 리사이즈 연동
-  - ThumbnailService: 리사이즈/썸네일 생성
-  - ImageUploadController: 업로드 처리(/api/images/upload)
-  - GlobalExceptionHandler: 공통 예외 처리(400/500)
-
+| 클래스 | 역할 |
+|---|---|
+| `FileController` | URL 패턴별 엔드포인트, NAS 서브디렉토리 매핑 |
+| `FileQueryService` | 파일 조회, Content-Type 판별, 리사이즈 연동 |
+| `ThumbnailService` | 리사이즈 생성·캐시, 동시성 제어 |
+| `GlobalExceptionHandler` | 공통 예외 처리 |

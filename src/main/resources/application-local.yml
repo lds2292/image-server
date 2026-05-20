@@ -2,4 +2,7 @@ spring:
   application:
     name: image-server
 env:
-  image-dir: /Users/ideogsu/Pictures/
+  image-dir: /Users/deoksoo.lee/Pictures/upload/
+  resize-dir: /Users/deoksoo.lee/Pictures/upload/resize/
+  biz-dir: giftishow_biz
+  panchok-dir: giftishow_panchok

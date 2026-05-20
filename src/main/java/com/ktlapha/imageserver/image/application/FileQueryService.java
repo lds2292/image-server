@@ -1,5 +1,6 @@
 package com.ktlapha.imageserver.image.application;
 
+import com.ktlapha.imageserver.common.exception.InvalidWidthException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -13,6 +14,7 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -21,7 +23,8 @@ public class FileQueryService {
 
     private final ThumbnailService thumbnailService;
 
-    // Encapsulated NAS base directory
+    private static final Set<Integer> ALLOWED_WIDTHS = Set.of(45, 80, 100, 150, 200, 250, 300, 400, 600, 800);
+
     @Value("${env.image-dir}")
     private Path BASE_DIR;
 
@@ -40,17 +43,17 @@ public class FileQueryService {
             throw new FileNotFoundException("File not found: " + filepath);
         }
 
-        // If width specified, validate and use resized square image named base_w{width}.ext
+        // w 파라미터가 있으면 허용 사이즈 검증 후 리사이즈 파일({base}_w{width}.{ext}) 반환
         if (width != null) {
-            if (width < 80 || width > 600) {
-                throw new IllegalArgumentException("w must be between 100 and 600");
+            if (!ALLOWED_WIDTHS.contains(width)) {
+                throw new InvalidWidthException(width);
             }
             try {
-                Path resized = thumbnailService.ensureResizedExists(target, width);
+                Path resized = thumbnailService.ensureResizedExists(target, filepath, width);
                 file = resized.toFile();
                 target = resized;
             } catch (IllegalArgumentException e) {
-                // invalid for non-image, propagate as 400 via exception handler
+                // 이미지가 아닌 파일에 w 지정 시 400으로 전파
                 throw e;
             } catch (Exception e) {
                 log.warn("Failed to create/find resized image for {} (w={}): {}", filepath, width, e.getMessage());

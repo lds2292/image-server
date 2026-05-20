@@ -2,4 +2,7 @@ spring:
   application:
     name: image-server
 env:
-  image-dir: /mnt/nas_mount/images/upload/giftishow_biz
+  image-dir: /mnt/nas_mount/images/upload
+  resize-dir: /mnt/nas_mount/images/upload/resize
+  biz-dir: giftishow_biz
+  panchok-dir: giftishow_panchok
