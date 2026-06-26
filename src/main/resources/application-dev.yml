@@ -3,6 +3,6 @@ spring:
     name: image-server
 env:
   image-dir: /mnt/nas_mount/images/upload
-  resize-dir: /mnt/nas_mount/images/upload/resize
+  resize-dir: /mnt/nas_mount/images/upload/giftishowbiz_resize
   biz-dir: giftishow_biz
   panchok-dir: giftishow_panchok
