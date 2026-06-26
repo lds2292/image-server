@@ -57,7 +57,7 @@ class ThumbnailServiceConcurrencyTest {
         for (int i = 0; i < THREAD_COUNT; i++) {
             futures.add(executor.submit(() -> {
                 startGate.await();
-                return thumbnailService.ensureResizedExists(original, "source.jpg", targetWidth);
+                return thumbnailService.ensureResizedExists(original, "source.jpg", targetWidth, false);
             }));
         }
 
@@ -102,7 +102,7 @@ class ThumbnailServiceConcurrencyTest {
         for (int i = 0; i < THREAD_COUNT; i++) {
             futures.add(executor.submit(() -> {
                 startGate.await();
-                return thumbnailService.ensureResizedExists(original, "source.png", targetWidth);
+                return thumbnailService.ensureResizedExists(original, "source.png", targetWidth, false);
             }));
         }
 
@@ -139,7 +139,7 @@ class ThumbnailServiceConcurrencyTest {
             int w = widths[i % widths.length];
             futures.add(executor.submit(() -> {
                 startGate.await();
-                return thumbnailService.ensureResizedExists(original, "multi.jpg", w);
+                return thumbnailService.ensureResizedExists(original, "multi.jpg", w, false);
             }));
         }
 
@@ -169,7 +169,7 @@ class ThumbnailServiceConcurrencyTest {
         Path original = createTestImage("cached.jpg", 600, 400, "jpg");
         int targetWidth = 100;
 
-        Path prebuilt = thumbnailService.ensureResizedExists(original, "cached.jpg", targetWidth);
+        Path prebuilt = thumbnailService.ensureResizedExists(original, "cached.jpg", targetWidth, false);
         long prebuiltLastModified = Files.getLastModifiedTime(prebuilt).toMillis();
 
         CountDownLatch startGate = new CountDownLatch(1);
@@ -179,7 +179,7 @@ class ThumbnailServiceConcurrencyTest {
         for (int i = 0; i < THREAD_COUNT; i++) {
             futures.add(executor.submit(() -> {
                 startGate.await();
-                return thumbnailService.ensureResizedExists(original, "cached.jpg", targetWidth);
+                return thumbnailService.ensureResizedExists(original, "cached.jpg", targetWidth, false);
             }));
         }
 

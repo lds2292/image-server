@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.context.request.WebRequest;
 
 import java.io.IOException;
+import java.util.Optional;
 
 @RestController
 @RequiredArgsConstructor
@@ -38,7 +39,7 @@ public class FileController {
             @RequestParam(name = "w", required = false) Integer width,
             WebRequest webRequest) throws IOException {
 
-        return serve(bizDir + "/" + filename, width, webRequest);
+        return serve(bizDir + "/" + filename, width, webRequest, acceptsWebP(webRequest));
     }
 
     // /Resource/{*path} → {image-dir}/{path}
@@ -48,7 +49,7 @@ public class FileController {
             @RequestParam(name = "w", required = false) Integer width,
             WebRequest webRequest) throws IOException {
 
-        return serve(path.substring(1), width, webRequest);
+        return serve(path.substring(1), width, webRequest, acceptsWebP(webRequest));
     }
 
     // /image_panc/{*path} → {image-dir}/{panchok-dir}/{path}
@@ -58,14 +59,23 @@ public class FileController {
             @RequestParam(name = "w", required = false) Integer width,
             WebRequest webRequest) throws IOException {
 
-        return serve(panchokDir + path, width, webRequest);
+        return serve(panchokDir + path, width, webRequest, acceptsWebP(webRequest));
     }
 
-    private ResponseEntity<Resource> serve(String filepath, Integer width, WebRequest webRequest) throws IOException {
-        FileResourceResult result = fileQueryService.fetch(filepath, width);
+    private boolean acceptsWebP(WebRequest webRequest) {
+        return Optional.ofNullable(webRequest.getHeader(HttpHeaders.ACCEPT))
+                .map(a -> a.contains("image/webp"))
+                .orElse(false);
+    }
+
+    private ResponseEntity<Resource> serve(String filepath, Integer width, WebRequest webRequest, boolean acceptWebP) throws IOException {
+        FileResourceResult result = fileQueryService.fetch(filepath, width, acceptWebP);
 
         long lastModified = result.getResource().lastModified();
-        String etag = "\"" + Long.toHexString(lastModified) + (width != null ? "-" + width : "") + "\"";
+        String etag = "\"" + Long.toHexString(lastModified)
+                + (width != null ? "-" + width : "")
+                + (acceptWebP ? "-webp" : "")
+                + "\"";
 
         if (webRequest.checkNotModified(etag, lastModified)) {
             return ResponseEntity.status(HttpStatus.NOT_MODIFIED).build();
@@ -73,7 +83,7 @@ public class FileController {
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + result.getFilename() + "\"")
-                .header(HttpHeaders.CACHE_CONTROL, "public, max-age=86400")
+                .header(HttpHeaders.VARY, HttpHeaders.ACCEPT)
                 .eTag(etag)
                 .lastModified(lastModified)
                 .contentType(MediaType.parseMediaType(result.getContentType()))

@@ -28,7 +28,7 @@ public class FileQueryService {
     @Value("${env.image-dir}")
     private Path BASE_DIR;
 
-    public FileResourceResult fetch(String filepath, Integer width) throws IOException {
+    public FileResourceResult fetch(String filepath, Integer width, boolean acceptWebP) throws IOException {
         if (filepath == null || filepath.isBlank()) {
             throw new IllegalArgumentException("filepath must not be blank");
         }
@@ -43,20 +43,28 @@ public class FileQueryService {
             throw new FileNotFoundException("File not found: " + filepath);
         }
 
-        // w 파라미터가 있으면 허용 사이즈 검증 후 리사이즈 파일({base}_w{width}.{ext}) 반환
+        // w 파라미터가 있으면 허용 사이즈 검증 후 리사이즈 파일({base}_w{width}.{ext|webp}) 반환
         if (width != null) {
             if (!ALLOWED_WIDTHS.contains(width)) {
                 throw new InvalidWidthException(width);
             }
             try {
-                Path resized = thumbnailService.ensureResizedExists(target, filepath, width);
+                Path resized = thumbnailService.ensureResizedExists(target, filepath, width, acceptWebP);
                 file = resized.toFile();
                 target = resized;
             } catch (IllegalArgumentException e) {
-                // 이미지가 아닌 파일에 w 지정 시 400으로 전파
                 throw e;
             } catch (Exception e) {
-                log.warn("Failed to create/find resized image for {} (w={}): {}", filepath, width, e.getMessage());
+                log.warn("Failed to create/find resized image for {} (w={}): {}", filepath, width, e.getMessage(), e);
+            }
+        } else if (acceptWebP) {
+            try {
+                Path webpPath = thumbnailService.ensureWebPExists(target, filepath);
+                file = webpPath.toFile();
+                target = webpPath;
+            } catch (Exception e) {
+                log.warn("WebP conversion failed for {}: {}", filepath, e.getMessage(), e);
+                // 실패 시 원본 그대로 서빙
             }
         }
 
