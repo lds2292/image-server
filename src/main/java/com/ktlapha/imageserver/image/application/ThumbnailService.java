@@ -2,19 +2,19 @@ package com.ktlapha.imageserver.image.application;
 
 import lombok.extern.slf4j.Slf4j;
 import net.coobird.thumbnailator.Thumbnails;
-import net.coobird.thumbnailator.filters.ImageFilter;
 import net.coobird.thumbnailator.resizers.configurations.ScalingMode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-import java.awt.image.BufferedImage;
-import java.awt.image.ConvolveOp;
-import java.awt.image.Kernel;
+import javax.imageio.ImageIO;
+import javax.imageio.ImageReader;
+import javax.imageio.stream.ImageInputStream;
 import java.io.IOException;
 import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Iterator;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -62,6 +62,11 @@ public class ThumbnailService {
             return resizedPath;
         }
 
+        // 요청 너비가 원본 너비 이상이면 업스케일이므로 원본 그대로 반환
+        if (width >= readImageWidth(originalPath)) {
+            return originalPath;
+        }
+
         String key = resizedPath.toString();
         CompletableFuture<Path> newFuture = new CompletableFuture<>();
         CompletableFuture<Path> existing = inProgress.putIfAbsent(key, newFuture);
@@ -80,7 +85,7 @@ public class ThumbnailService {
         }
 
         try {
-            Path result = doGenerate(originalPath, resizedPath, width, ext, extLower);
+            Path result = doGenerate(originalPath, resizedPath, width, extLower);
             newFuture.complete(result);
             return result;
         } catch (IOException e) {
@@ -91,7 +96,7 @@ public class ThumbnailService {
         }
     }
 
-    private Path doGenerate(Path originalPath, Path resizedPath, int width, String ext, String extLower) throws IOException {
+    private Path doGenerate(Path originalPath, Path resizedPath, int width, String extLower) throws IOException {
         Files.createDirectories(resizedPath.getParent());
 
         String base = resizedPath.getFileName().toString();
@@ -102,11 +107,10 @@ public class ThumbnailService {
         try {
             Thumbnails.Builder<?> builder = Thumbnails.of(originalPath.toFile())
                     .width(width)
-                    .scalingMode(ScalingMode.PROGRESSIVE_BILINEAR)
-                    .addFilter(UNSHARP_MASK);
+                    .scalingMode(ScalingMode.PROGRESSIVE_BILINEAR);
 
             if ("jpg".equals(extLower) || "jpeg".equals(extLower)) {
-                builder.outputFormat("jpg").outputQuality(0.85f);
+                builder.outputFormat("jpg").outputQuality(0.92f);
             } else {
                 builder.outputFormat(extLower);
             }
@@ -126,7 +130,6 @@ public class ThumbnailService {
                 Thumbnails.of(originalPath.toFile())
                         .width(width)
                         .scalingMode(ScalingMode.PROGRESSIVE_BILINEAR)
-                        .addFilter(UNSHARP_MASK)
                         .outputFormat("png")
                         .toFile(fallbackTmp.toFile());
                 atomicMove(fallbackTmp, fallbackPath);
@@ -138,16 +141,22 @@ public class ThumbnailService {
         }
     }
 
-    private static final ImageFilter UNSHARP_MASK = (BufferedImage img) -> {
-        float a = 0.075f;
-        float c = 1f + 8 * a;
-        Kernel kernel = new Kernel(3, 3, new float[]{
-                -a, -a, -a,
-                -a,  c, -a,
-                -a, -a, -a
-        });
-        return new ConvolveOp(kernel, ConvolveOp.EDGE_NO_OP, null).filter(img, null);
-    };
+    // 이미지 전체를 메모리에 올리지 않고 헤더만 읽어 너비를 반환
+    private int readImageWidth(Path imagePath) throws IOException {
+        try (ImageInputStream iis = ImageIO.createImageInputStream(imagePath.toFile())) {
+            Iterator<ImageReader> readers = ImageIO.getImageReaders(iis);
+            if (readers.hasNext()) {
+                ImageReader reader = readers.next();
+                try {
+                    reader.setInput(iis, true, true);
+                    return reader.getWidth(0);
+                } finally {
+                    reader.dispose();
+                }
+            }
+        }
+        throw new IOException("이미지 크기를 읽을 수 없습니다: " + imagePath);
+    }
 
     private void atomicMove(Path src, Path dest) throws IOException {
         try {
